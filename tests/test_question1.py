@@ -6,7 +6,7 @@ from question1.agent import SupportCopilot
 PUBLIC = ["T-1001", "T-1002", "T-1003", "T-1004"]
 
 
-def test_baseline_resolves_public_tickets():
+def test_resolves_public_tickets():
     copilot = SupportCopilot()
     for tid in PUBLIC:
         expected = TICKET_EXPECTATIONS[tid]
@@ -23,8 +23,8 @@ def test_holdout_subscription():
     assert got.kb_article == exp.kb_article
 
 
-def test_baseline_cost_is_high():
-    copilot = SupportCopilot()
-    for tid in PUBLIC:
-        copilot.handle_ticket(tid)
-    assert copilot.session.total_points() > 15_000
+def test_cost_is_within_question1_budget():
+    for ticket_id in PUBLIC:
+        copilot = SupportCopilot()
+        copilot.handle_ticket(ticket_id)
+        assert copilot.session.total_points() <= 3000
