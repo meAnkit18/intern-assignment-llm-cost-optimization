@@ -23,14 +23,26 @@
 - Q1: at most 3,000 points per public ticket.
 - Q2: at most 2,500 points per public ticket.
 
-## Solution flow diagram
+## Solution diagrams
 
-The visual below compares the two optimized solution tracks. The editable source is available in [draw.io format](diagrams/shopassist-solution-flow.drawio) and can be opened or edited at [app.diagrams.net](https://app.diagrams.net/).
+The two questions use different solution designs, so each is shown separately below. Both diagrams are available as editable draw.io files.
 
-![ShopAssist LLM cost optimization solution flow](diagrams/shopassist-solution-flow.svg)
+### Question 1 — Single-call copilot
 
-### How to read the diagram
+The copilot builds a compact prompt from the customer conversation and structured order snapshot, then makes one LLM request. It removes the full help-center dump, verbose few-shot traces, and nondeterministic run IDs.
 
-- **Question 1:** A compact prompt containing the ticket thread and structured order snapshot goes into one LLM call. The full help-center dump, verbose examples, and nondeterministic run IDs are removed.
-- **Question 2:** Triage extracts relevant facts, retrieval selects one relevant article, composition makes the only LLM call, and audit validates the output locally.
-- **Cost impact:** Both tracks reduce unnecessary prompt tokens and avoid extra model calls. The cost report measures token usage using the scoring formula above.
+![Question 1 — Single-call copilot flow](diagrams/question1-single-call.svg)
+
+[Open editable Question 1 diagram in draw.io](diagrams/question1-single-call.drawio)
+
+### Question 2 — Four-stage pipeline
+
+The pipeline performs triage and article retrieval locally, makes one LLM call for composition, and validates the generated JSON locally during audit. Only one candidate article ID is passed instead of the full help-center corpus.
+
+![Question 2 — Four-stage pipeline](diagrams/question2-four-stage.svg)
+
+[Open editable Question 2 diagram in draw.io](diagrams/question2-four-stage.drawio)
+
+### Shared cost objective
+
+Both designs reduce unnecessary prompt tokens. Question 1 uses a compact single request; Question 2 adds deterministic preprocessing and local validation so only composition requires model inference.
