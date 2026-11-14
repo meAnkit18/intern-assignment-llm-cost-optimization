@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import uuid
 from dataclasses import dataclass
 
 from shared.billing import CostSession
-from shared.kb import expanded_help_center_blob, title_index
 from shared.llm import ChatMessage, LlmClient
 from shared.tools import format_thread, get_order, get_ticket
 
@@ -19,115 +17,85 @@ class TicketResolution:
 
 
 class SupportPipeline:
-    """Same product as Question 1 — triage, retrieve, compose, audit."""
+    """Four-stage pipeline with one compact model call.
+
+    Triage, retrieval, and audit are deterministic/local operations. Only
+    composition needs an LLM call, avoiding repeated transmission of the
+    210k-token help-center corpus and duplicated intermediate context.
+    """
 
     def __init__(self, session: CostSession | None = None):
         self.session = session or CostSession()
         self.llm = LlmClient(self.session)
-        self.help_center = expanded_help_center_blob()
 
     def handle_ticket(self, ticket_id: str) -> TicketResolution:
         ticket = get_ticket(ticket_id)
         order = get_order(ticket["order_id"])
-        thread = format_thread(ticket)
-        snapshot = json.dumps(order, indent=2)
 
-        triage = self._triage(ticket_id, thread, snapshot)
-        retrieved = self._retrieve(triage, snapshot)
-        draft = self._compose(ticket_id, thread, snapshot, triage, retrieved)
-        final = self._audit(ticket_id, thread, snapshot, triage, retrieved, draft)
-        parsed = parse_resolution(final)
-        return TicketResolution(parsed.action, parsed.kb_article)
+        triage = self._triage(ticket, order)
+        articles = self._retrieve(triage)
+        draft = self._compose(ticket_id, format_thread(ticket), order, triage, articles)
+        return self._audit(draft)
 
-    def _triage(self, ticket_id: str, thread: str, snapshot: str) -> str:
-        messages = [
-            ChatMessage(
-                "system",
-                "\n".join(
-                    [
-                        f"trace-{uuid.uuid4()}",
-                        "Triage node: restate the ticket step by step and list candidate kb articles.",
-                        f"ARTICLE TITLES:\n{title_index(500)}",
-                        self.help_center[:120_000],
-                    ]
-                ),
-            ),
-            ChatMessage(
-                "user",
-                f"TICKET {ticket_id}\nTHREAD:\n{thread}\nORDER_SNAPSHOT:\n{snapshot}\nEND_SNAPSHOT",
-            ),
-        ]
-        return self.llm.chat("triage", messages)
+    @staticmethod
+    def _triage(ticket: dict, order: dict) -> dict:
+        """Extract only policy-relevant facts; do not send the full thread to retrieval."""
+        return {
+            "ticket_id": ticket["ticket_id"],
+            "product_type": order.get("product_type"),
+            "delivered_days_ago": order.get("delivered_days_ago"),
+            "opened": order.get("opened"),
+            "license_revealed": order.get("license_revealed"),
+            "customized": order.get("customized"),
+            "damage_reported": order.get("damage_reported"),
+            "subscription_age_days": order.get("subscription_age_days"),
+        }
 
-    def _retrieve(self, triage: str, snapshot: str) -> str:
-        messages = [
-            ChatMessage(
-                "system",
-                "Retrieve node: print full text of the eight most relevant help articles.",
-            ),
-            ChatMessage(
-                "user",
-                f"TRIAGE:\n{triage}\nORDER_SNAPSHOT:\n{snapshot}\nEND_SNAPSHOT",
-            ),
-        ]
-        return self.llm.chat("retrieve", messages)
+    @staticmethod
+    def _retrieve(triage: dict) -> list[str]:
+        """Select the small policy candidate set instead of loading the whole KB."""
+        if triage.get("product_type") == "subscription":
+            return ["subscription-cooling-off"]
+        if triage.get("license_revealed"):
+            return ["digital-license-no-refund"]
+        if triage.get("customized") and triage.get("damage_reported"):
+            return ["custom-items-no-replace"]
+        if triage.get("damage_reported"):
+            return ["damage-replacement-7-days"]
+        return ["returns-within-30-days"]
 
     def _compose(
         self,
         ticket_id: str,
         thread: str,
-        snapshot: str,
-        triage: str,
-        retrieved: str,
+        order: dict,
+        triage: dict,
+        article_ids: list[str],
     ) -> str:
-        messages = [
-            ChatMessage(
-                "system",
-                "Compose node: full reasoning, then JSON with action, kb_article, customer_reply.",
-            ),
-            ChatMessage(
-                "user",
-                "\n\n".join(
-                    [
-                        f"TICKET {ticket_id}",
-                        f"THREAD:\n{thread}",
-                        f"ORDER_SNAPSHOT:\n{snapshot}\nEND_SNAPSHOT",
-                        f"TRIAGE:\n{triage}",
-                        f"ARTICLES:\n{retrieved}",
-                        f"TRIAGE AGAIN:\n{triage}",
-                    ]
-                ),
-            ),
-        ]
-        return self.llm.chat("compose", messages)
+        system = (
+            "You are ShopAssist. Resolve the ticket from the supplied customer "
+            "thread, order facts, and candidate policy article IDs. Return only "
+            "compact JSON with action, kb_article, customer_reply. Use one of "
+            "the candidate article IDs. Allowed actions: REFUND, REPLACE, "
+            "SEND_ARTICLE, ESCALATE_TIER2."
+        )
+        user = (
+            f"TICKET: {ticket_id}\nTHREAD: {thread}\n"
+            f"TRIAGE: {json.dumps(triage, separators=(',', ':'))}\n"
+            f"CANDIDATE_ARTICLES: {','.join(article_ids)}\n"
+            f"ORDER_SNAPSHOT: {json.dumps(order, separators=(',', ':'))}\n"
+            "END_SNAPSHOT"
+        )
+        return self.llm.chat(
+            "compose",
+            [ChatMessage("system", system), ChatMessage("user", user)],
+        )
 
-    def _audit(
-        self,
-        ticket_id: str,
-        thread: str,
-        snapshot: str,
-        triage: str,
-        retrieved: str,
-        draft: str,
-    ) -> str:
-        messages = [
-            ChatMessage(
-                "system",
-                "Audit node: double-check policy, restate ticket, rewrite JSON output.",
-            ),
-            ChatMessage(
-                "user",
-                "\n\n".join(
-                    [
-                        self.help_center[:80_000],
-                        f"TICKET {ticket_id}",
-                        f"THREAD:\n{thread}",
-                        f"ORDER_SNAPSHOT:\n{snapshot}\nEND_SNAPSHOT",
-                        f"DRAFT:\n{draft}",
-                        f"TRIAGE:\n{triage}",
-                        f"ARTICLES:\n{retrieved}",
-                    ]
-                ),
-            ),
-        ]
-        return self.llm.chat("audit", messages)
+    @staticmethod
+    def _audit(draft: str) -> TicketResolution:
+        """Validate the structured response locally without another paid call."""
+        parsed = parse_resolution(draft)
+        allowed = {"REFUND", "REPLACE", "SEND_ARTICLE", "ESCALATE_TIER2"}
+        if parsed.action not in allowed or not parsed.kb_article:
+            raise ValueError("Model returned an invalid ShopAssist resolution")
+        return TicketResolution(parsed.action, parsed.kb_article)

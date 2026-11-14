@@ -13,15 +13,16 @@ def test_help_center_exceeds_context():
 
 
 def test_pipeline_resolves_public_tickets():
-    pipe = SupportPipeline()
-    for tid in PUBLIC:
-        expected = TICKET_EXPECTATIONS[tid]
-        got = pipe.handle_ticket(tid)
+    for ticket_id in PUBLIC:
+        pipe = SupportPipeline()
+        expected = TICKET_EXPECTATIONS[ticket_id]
+        got = pipe.handle_ticket(ticket_id)
         assert got.action == expected.action
         assert got.kb_article == expected.kb_article
 
 
-def test_baseline_cost_is_high():
-    pipe = SupportPipeline()
-    pipe.handle_ticket(PUBLIC[0])
-    assert pipe.session.total_points() > 70_000
+def test_cost_is_within_question2_budget():
+    for ticket_id in PUBLIC:
+        pipe = SupportPipeline()
+        pipe.handle_ticket(ticket_id)
+        assert pipe.session.total_points() <= 2500
