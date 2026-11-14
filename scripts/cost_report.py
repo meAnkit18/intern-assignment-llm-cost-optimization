@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+
+# When invoked as "python scripts/cost_report.py", Python puts scripts/
+# rather than the repository root on sys.path.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from question1.agent import SupportCopilot
 from question2.agent import SupportPipeline
