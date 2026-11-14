@@ -82,8 +82,9 @@ class SupportPipeline:
         user = (
             f"TICKET: {ticket_id}\nTHREAD: {thread}\n"
             f"TRIAGE: {json.dumps(triage, separators=(',', ':'))}\n"
+            f"CANDIDATE_ARTICLES: {','.join(article_ids)}\n"
             f"ORDER_SNAPSHOT: {json.dumps(order, separators=(',', ':'))}\n"
-            f"CANDIDATE_ARTICLES: {','.join(article_ids)}\nEND_SNAPSHOT"
+            "END_SNAPSHOT"
         )
         return self.llm.chat(
             "compose",
